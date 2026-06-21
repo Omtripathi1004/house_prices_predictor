@@ -1,173 +1,113 @@
-import os, logging
-from fastapi import FastAPI, HTTPException
-import joblib, requests
+import os, logging, io
+import joblib, requests, pandas as pd
 from io import BytesIO
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="House Prices Predictor")
-MODEL_PATH = "house_features.joblib"
+
+# Model paths / env
+MODEL_PATH = "house_model.joblib"
+FEATURES_PATH = "house_features.joblib"
 MODEL_URL = os.getenv("MODEL_URL")
-model = None
 
-def load_from_file(path):
-    logger.info("Loading model from %s", path)
-    return joblib.load(path)
-
-def load_from_url(url):
-    logger.info("Downloading model from %s", url)
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
-    return joblib.load(BytesIO(r.content))
-
-@app.on_event("startup")
-def startup():
-    global model
-    try:
-        if MODEL_URL:
-            model = load_from_url(MODEL_URL)
-        elif os.path.exists(MODEL_PATH):
-            model = load_from_file(MODEL_PATH)
-        else:
-            logger.warning("No model found; set MODEL_URL or include %s", MODEL_PATH)
-            model = None
-    except Exception:
-        logger.exception("Model load failed")
+# Load model and features
+try:
+    if MODEL_URL:
+        logger.info("Downloading model from %s", MODEL_URL)
+        r = requests.get(MODEL_URL, timeout=30)
+        r.raise_for_status()
+        model = joblib.load(BytesIO(r.content))
+    elif os.path.exists(MODEL_PATH):
+        logger.info("Loading model from %s", MODEL_PATH)
+        model = joblib.load(MODEL_PATH)
+    else:
+        logger.warning("No model found; set MODEL_URL or include %s", MODEL_PATH)
         model = None
+except Exception:
+    logger.exception("Model load failed")
+    model = None
 
-@app.get("/health")
-def health():
-    return {"status":"ok","model_loaded": model is not None}
+features = joblib.load(FEATURES_PATH) if os.path.exists(FEATURES_PATH) else []
 
-
-
-import io
-import joblib 
-import pandas as pd
-from fastapi import FastAPI,HTTPException, UploadFile , File
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-
-app = FastAPI()
-
-model =joblib.load("house_model.joblib")
-features = joblib.load("house_features.joblib")
-
+# Pydantic schema
 class HouseFeatures(BaseModel):
-    MedInc: float = Field(gt=0, description="Median income of the neighbourhood")
-    HouseAge: float = Field(gt=0, description="Average age of the house in the block")
-    AveRooms: float = Field(gt=0, description="Average number of rooms per house")
-    AveBedrms: float = Field(gt=0, description="Average number of bedrooms per house")
-    Population: float = Field(gt=0, description="Total population of the block")
-    AveOccup: float = Field(gt=0, description="Average number of people living in the house")
-    Latitude: float = Field(ge=32, le=42, description="Latitude")
-    Longitude: float = Field(ge=-125, le=-114, description="Longitude")
+    MedInc: float = Field(gt=0)
+    HouseAge: float = Field(gt=0)
+    AveRooms: float = Field(gt=0)
+    AveBedrms: float = Field(gt=0)
+    Population: float = Field(gt=0)
+    AveOccup: float = Field(gt=0)
+    Latitude: float = Field(ge=32, le=42)
+    Longitude: float = Field(ge=-125, le=-114)
 
-
-# home 
-
+# Routes
 @app.get("/")
 def home():
     return {
-        "message":"California houses prediction api",
-        "Status":"running",
-        "Endpoint":"send POST request to /predict"
+        "message": "California houses prediction API",
+        "status": "running",
+        "endpoint": "send POST request to /predict"
     }
 
 @app.get("/health")
 def health():
     return {
-        "Status":"running",
-        "model":"RandomForestRegressor",
-        "features":features,
-        "avg_error": "$32,773"
+        "status": "ok",
+        "model_loaded": model is not None,
+        "features": features
     }
 
-#predication
 @app.post("/predict")
 def predict(house: HouseFeatures):
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
     try:
-        input_data = pd.DataFrame([{
-            "MedInc":house.MedInc,
-            "HouseAge":house.HouseAge,
-            "AveRooms":house.AveRooms,
-            "AveBedrms": house.AveBedrms,
-            "Population":house.Population,
-            "AveOccup": house.AveOccup,
-            "Latitude":house.Latitude,
-            "Longitude": house.Longitude
-        }])
-
+        input_data = pd.DataFrame([house.dict()])
         predicted = model.predict(input_data)[0]
         price_usd = predicted * 100000
-
-        return{
-            "predicted_price":f"${price_usd:,.0f}",
+        return {
+            "predicted_price": f"${price_usd:,.0f}",
             "predicted_price_short": f"${predicted:.2f} hundred thousands",
             "confidence_range": f"${price_usd - 32773:,.0f} to ${price_usd + 32773:,.0f}"
         }
     except Exception as e:
-        raise HTTPException(
-            status_code= 500,
-            detail =f"prediction failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 @app.post("/predict-file")
-async def predict_file (file: UploadFile = File(...)):
+async def predict_file(file: UploadFile = File(...)):
     if not file.filename.endswith(".csv"):
-        raise HTTPException(
-            status_code=400,
-            detail="please upload a CSV File only"
-        )
+        raise HTTPException(status_code=400, detail="Please upload a CSV file only")
     contents = await file.read()
     try:
-        s = contents.decode('utf-8')
+        s = contents.decode("utf-8")
     except Exception:
-        s = contents.decode('latin-1')
+        s = contents.decode("latin-1")
     df = pd.read_csv(io.StringIO(s))
 
-    required_columns=["MedInc","HouseAge","AveRooms","AveBedrms","Population","AveOccup","Latitude","Longitude"
+    required_columns = [
+        "MedInc","HouseAge","AveRooms","AveBedrms",
+        "Population","AveOccup","Latitude","Longitude"
     ]
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
+    if len(df) == 0:
+        raise HTTPException(status_code=400, detail="The uploaded file has no data rows")
 
-
-    missing_columns =[
-        col for col in required_columns
-        if col not in df.columns
-    ]
-
-    if missing_columns:
-        raise HTTPException(
-            status_code=400,
-            detail=f'These columns are missing from your file: {missing_columns}'
-        )
-    
-    if len(df)==0:
-        raise HTTPException(
-            status_code=400,
-            detail='The uploaded file has no data rows'
-        )
-    
     try:
         predictions = model.predict(df[required_columns])
         price_usd = predictions * 100000
-        df['predicted_price_usd'] = price_usd
-        df['predicted_price_usd'] = df['predicted_price_usd'].apply(lambda x: f"${x:,.0f}")
-
+        df["predicted_price_usd"] = [f"${x:,.0f}" for x in price_usd]
         output = df.to_csv(index=False)
-
-
         return StreamingResponse(
             io.StringIO(output),
             media_type="text/csv",
-            headers={
-                "Content-Disposition": "attachment; filename=predictions.csv"
-            }
+            headers={"Content-Disposition": "attachment; filename=predictions.csv"}
         )
-    
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Prediction failed: {str(e)}"
-        )
-
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
