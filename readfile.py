@@ -1,3 +1,47 @@
+import os, logging
+from fastapi import FastAPI, HTTPException
+import joblib, requests
+from io import BytesIO
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="House Prices Predictor")
+MODEL_PATH = "house_features.joblib"
+MODEL_URL = os.getenv("MODEL_URL")
+model = None
+
+def load_from_file(path):
+    logger.info("Loading model from %s", path)
+    return joblib.load(path)
+
+def load_from_url(url):
+    logger.info("Downloading model from %s", url)
+    r = requests.get(url, timeout=30)
+    r.raise_for_status()
+    return joblib.load(BytesIO(r.content))
+
+@app.on_event("startup")
+def startup():
+    global model
+    try:
+        if MODEL_URL:
+            model = load_from_url(MODEL_URL)
+        elif os.path.exists(MODEL_PATH):
+            model = load_from_file(MODEL_PATH)
+        else:
+            logger.warning("No model found; set MODEL_URL or include %s", MODEL_PATH)
+            model = None
+    except Exception:
+        logger.exception("Model load failed")
+        model = None
+
+@app.get("/health")
+def health():
+    return {"status":"ok","model_loaded": model is not None}
+
+
+
 import io
 import joblib 
 import pandas as pd
