@@ -20,8 +20,8 @@ WORKDIR /app
 # Copy requirements first (better caching)
 COPY requirements.txt /app/requirements.txt
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
+# Install build helpers (Meson/Ninja) + Python dependencies
+RUN pip install --upgrade pip setuptools wheel meson ninja && \
     pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy project files
@@ -35,5 +35,3 @@ EXPOSE 80
 
 # Start Uvicorn
 CMD ["uvicorn", "readfile:app", "--host", "0.0.0.0", "--port", "80"]
-
-RUN pip install --upgrade pip setuptools wheel meson ninja
