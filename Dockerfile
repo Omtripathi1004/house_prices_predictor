@@ -1,5 +1,5 @@
-# Use slim Python base image
-FROM python:3.11-slim
+# Use full Python image (not slim) to avoid apt issues
+FROM python:3.11
 
 # Environment settings
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -20,7 +20,7 @@ WORKDIR /app
 # Copy requirements first (better caching)
 COPY requirements.txt /app/requirements.txt
 
-# Install build helpers (Meson/Ninja) + Python dependencies
+# Install build helpers + Python dependencies
 RUN pip install --upgrade pip setuptools wheel meson ninja && \
     pip install --no-cache-dir -r /app/requirements.txt
 
