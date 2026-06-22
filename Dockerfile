@@ -12,6 +12,7 @@ RUN apt-get update && \
         gcc \
         gfortran \
         libatlas-base-dev && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Set working directory
