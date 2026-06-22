@@ -1,4 +1,4 @@
-# Use full Python image (not slim) to avoid apt issues
+# Python base image
 FROM python:3.11
 
 # Environment settings
@@ -11,28 +11,32 @@ RUN apt-get update && \
         build-essential \
         gcc \
         gfortran \
-        libatlas-base-dev && \
-    apt-get clean && \
+        libopenblas-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first (better caching)
-COPY requirements.txt /app/requirements.txt
+# Copy requirements first for better layer caching
+COPY requirements.txt .
 
-# Install build helpers + Python dependencies
-RUN pip install --upgrade pip setuptools wheel meson ninja && \
-    pip install --no-cache-dir -r /app/requirements.txt
+# Upgrade pip and install dependencies
+RUN pip install --no-cache-dir --upgrade \
+        pip \
+        setuptools \
+        wheel \
+        meson \
+        ninja && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
-COPY . /app
+# Copy application source
+COPY . .
 
-# If your FastAPI project lives in a subfolder, adjust WORKDIR accordingly
+# Change this path if your FastAPI app is elsewhere
 WORKDIR /app/fastapi-project/project
 
-# Expose port
+# Expose FastAPI port
 EXPOSE 80
 
-# Start Uvicorn
+# Start FastAPI
 CMD ["uvicorn", "readfile:app", "--host", "0.0.0.0", "--port", "80"]
