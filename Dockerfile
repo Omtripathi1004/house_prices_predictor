@@ -12,6 +12,4 @@ RUN pip install --upgrade pip setuptools wheel && \
 
 COPY . .
 
-EXPOSE 80
-
-CMD ["uvicorn", "readfile:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["sh", "-c", "uvicorn readfile:app --host 0.0.0.0 --port ${PORT:-10000}"]

@@ -20,7 +20,6 @@ MODEL_PATH = "house_model.joblib"
 FEATURES_PATH = "house_features.joblib"
 MODEL_URL = os.getenv("MODEL_URL")
 
-print(os.path.getsize("house_model.joblib") / 1024 / 1024)
 model = None
 features = []
 
@@ -39,41 +38,39 @@ REQUIRED_COLUMNS = [
 def load_model():
     global model, features
 
+    # Load model
     try:
         if MODEL_URL:
             logger.info(f"Downloading model from {MODEL_URL}")
-
-            response = requests.get(
-                MODEL_URL,
-                timeout=(10, 60)
-            )
+            response = requests.get(MODEL_URL, timeout=(10, 60))
             response.raise_for_status()
-
-            model = joblib.load(
-                BytesIO(response.content)
-            )
-
-            logger.info("Model downloaded successfully")
+            model = joblib.load(BytesIO(response.content))
+            logger.info("Model downloaded successfully from MODEL_URL")
 
         elif os.path.exists(MODEL_PATH):
-            logger.info(f"Loading model from {MODEL_PATH}")
-
+            logger.info(f"Loading model from local file: {MODEL_PATH}")
             model = joblib.load(MODEL_PATH)
-
-            logger.info("Model loaded successfully")
+            logger.info("Model loaded successfully from local file")
 
         else:
-            logger.warning("No model file found")
+            logger.warning(f"No model file found at '{MODEL_PATH}' and MODEL_URL not set")
 
     except Exception as e:
         logger.exception(f"Model loading failed: {e}")
+        model = None
 
+    # Load feature names if available
     try:
         if os.path.exists(FEATURES_PATH):
             features = joblib.load(FEATURES_PATH)
+            logger.info("Feature file loaded successfully")
+        else:
+            logger.warning(f"Feature file not found: {FEATURES_PATH}")
+            features = REQUIRED_COLUMNS
 
     except Exception as e:
         logger.warning(f"Features loading failed: {e}")
+        features = REQUIRED_COLUMNS
 
 
 @asynccontextmanager
@@ -91,7 +88,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -127,7 +124,6 @@ def health():
 
 @app.post("/predict")
 def predict(house: HouseFeatures):
-
     if model is None:
         raise HTTPException(
             status_code=503,
@@ -135,17 +131,10 @@ def predict(house: HouseFeatures):
         )
 
     try:
-        try:
-            data = house.model_dump()
-        except AttributeError:
-            data = house.dict()
-
+        data = house.model_dump()
         df = pd.DataFrame([data])
 
-        prediction = float(
-            model.predict(df[REQUIRED_COLUMNS])[0]
-        )
-
+        prediction = float(model.predict(df[REQUIRED_COLUMNS])[0])
         price_usd = prediction * 100000
 
         return {
@@ -159,18 +148,14 @@ def predict(house: HouseFeatures):
 
     except Exception as e:
         logger.exception("Prediction error")
-
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"Prediction failed: {str(e)}"
         )
 
 
 @app.post("/predict-file")
-async def predict_file(
-    file: UploadFile = File(...)
-):
-
+async def predict_file(file: UploadFile = File(...)):
     if model is None:
         raise HTTPException(
             status_code=503,
@@ -191,15 +176,9 @@ async def predict_file(
         except UnicodeDecodeError:
             csv_text = content.decode("latin-1")
 
-        df = pd.read_csv(
-            io.StringIO(csv_text)
-        )
+        df = pd.read_csv(io.StringIO(csv_text))
 
-        missing = [
-            col for col in REQUIRED_COLUMNS
-            if col not in df.columns
-        ]
-
+        missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
         if missing:
             raise HTTPException(
                 status_code=400,
@@ -212,13 +191,10 @@ async def predict_file(
                 detail="CSV contains no rows"
             )
 
-        predictions = model.predict(
-            df[REQUIRED_COLUMNS]
-        )
+        predictions = model.predict(df[REQUIRED_COLUMNS])
 
         df["predicted_price_usd"] = [
-            round(pred * 100000, 2)
-            for pred in predictions
+            round(pred * 100000, 2) for pred in predictions
         ]
 
         output_csv = df.to_csv(index=False)
@@ -227,8 +203,7 @@ async def predict_file(
             BytesIO(output_csv.encode("utf-8")),
             media_type="text/csv",
             headers={
-                "Content-Disposition":
-                "attachment; filename=predictions.csv"
+                "Content-Disposition": "attachment; filename=predictions.csv"
             }
         )
 
@@ -237,8 +212,7 @@ async def predict_file(
 
     except Exception as e:
         logger.exception("CSV prediction error")
-
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"CSV prediction failed: {str(e)}"
         )
